@@ -1,0 +1,90 @@
+# need to set up in gitlab ci variables:
+# @ GIT_REPO
+# @ DEPLOY_AWS_PRIVATE_KEY
+# @ DEPLOY_GIT_PRIVATE_KEY
+# @ DEV_INSTANCE_IP
+# @ PROD_INSTANCE_IP
+
+image: node:12.21.0-alpine3.12
+
+variables:
+  S3_BUCKET_NAME_STAGING: "staging-a9.sntsolutions.io"
+  S3_BUCKET_NAME_PRODUCTION: "a9.sntsolutions.io"
+  DEBIAN_FRONTEND: "noninteractive"
+stages:
+  - test
+#   - staging
+#   - production
+
+test:
+  stage: test
+  image: sonnguyeninslife/alekzonde-docker-puppeteer-fork
+  variables:
+    GIT_STRATEGY: none
+    GIT_SUBMODULE_STRATEGY: none
+    GIT_CHECKOUT: "false"
+    GIT_DEPTH: "1"
+  before_script:
+    # set ssh key
+    - mkdir -p ~/.ssh
+    - echo "$GIT_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_rsa
+    - chmod 700 ~/.ssh/id_rsa
+    - hash ssh-agent || ( sudo apt-get update -y && sudo apt-get install openssh-client -y )
+    - eval "$(ssh-agent -s)"
+    - ssh-add ~/.ssh/id_rsa
+    - ssh-keyscan gitlab.com >> ~/.ssh/known_hosts
+    - chmod 644 ~/.ssh/known_hosts
+    # git setting up
+    - set +e
+    - rm -rf ./{*,.*} 2>/dev/null
+    - set -e
+    - git init
+    - git config --global user.email "ci-cd@agent.com"
+    - git config --global user.name  "ci-cd-agent"
+    - git remote add origin $GIT_REPO || git remote set-url origin $GIT_REPO
+    - git fetch origin $CI_COMMIT_BRANCH --depth=1
+    - git checkout -b $CI_COMMIT_BRANCH origin/$CI_COMMIT_BRANCH --force
+  script:
+    - . ./ops/install_snt_packages.sh
+    - npm install
+    # - npm i serve
+    # - npm run linter-folder
+    - npm run prettier:check
+    - npm run tslint
+    - npm run build:test
+    # - npm run static --silent &
+    # - . ops/wait_apis.sh
+    # - npm run test -- -u
+    # - . ops/git_push_build.sh
+    # - git log
+  only:
+    - branches
+  except:
+    refs:
+      - main
+    variables:
+      - $CI_COMMIT_MESSAGE =~ /upload latest screenshots/
+
+# staging:
+#   stage: staging
+#   script:
+#     - npm install
+#     - npm run linter-folder
+#     - npm i serve
+#     - npm run build:staging
+#     - . ops/install_aws_cli.sh
+#     - aws s3 cp ./out/ s3://$S3_BUCKET_NAME_STAGING/ --recursive
+#   only:
+#     - main
+
+# production:
+#   stage: production
+#   script:
+#     - npm install
+#     - npm run linter-folder
+#     - npm i serve
+#     - npm run build
+#     - . ops/install_aws_cli.sh
+#     - aws s3 cp ./out/ s3://$S3_BUCKET_NAME_PRODUCTION/ --recursive
+#   only:
+#     - tags
